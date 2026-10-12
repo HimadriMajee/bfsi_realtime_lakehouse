@@ -1,0 +1,22 @@
+# Java & Hadoop Binaries / Runtimes
+jdk*/
+jdk-17*/
+hadoop/
+*.dll
+*.exe
+
+# Python Virtual Environments & Packages
+venv/
+*.pyc
+__pycache__/
+*.egg-info/
+
+# IDEs & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment & Secret Files
+.env
+*.pem

@@ -1,0 +1,39 @@
+services:                                                    # Top-level key defining the collection of Docker containers to manage
+
+  kafka:                                                     # Service identifier for the Apache Kafka event broker container
+    image: apache/kafka:3.8.0                                # Pulls the official Apache Software Foundation Kafka image (v3.8.0)
+    container_name: kafka_kraft                              # Assigns a fixed, human-readable name to the container in Docker CLI
+    ports:                                                   # Exposes and maps container network ports to the host machine (HOST:CONTAINER)
+      - "9092:9092"                                          # Port 9092 for internal Docker/inter-container network traffic
+      - "9094:9094"                                          # Port 9094 for host application access (e.g., Python producer on Windows)
+    environment:                                             # Section defining environment variables passed into the Kafka container
+      KAFKA_NODE_ID: 0                                       # Unique integer ID identifying this specific broker node in the cluster
+      KAFKA_PROCESS_ROLES: controller,broker                 # KRaft mode setting: Configures node to act as both Message Broker and Raft Controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093           # Defines Raft voting membership (Node 0 reachable at hostname 'kafka' on port 9093)
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094 # Network interfaces & protocols Kafka binds to inside container
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094 # Endpoint addresses advertised to connecting clients (internal vs host)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT # Maps each listener channel to unencrypted PLAINTEXT security
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER            # Designates the CONTROLLER listener channel for Raft metadata management traffic
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT            # Designates the PLAINTEXT listener channel for standard inter-broker communication
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"                   # Restricts JVM memory (256MB initial, 512MB max) to prevent host system RAM exhaustion
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"                # Automatically provisions topics when messages are published if they don't exist
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1              # Sets internal __consumer_offsets topic replication factor to 1 (for single node)
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1     # Sets internal transaction log topic replication factor to 1 (for single node)
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1                 # Sets minimum in-sync replicas (ISR) for transactional state logs to 1
+    volumes:                                                 # Mounts persistent storage volumes to preserve data across container restarts
+      - kafka_data:/var/lib/kafka/data                       # Maps named Docker volume 'kafka_data' to Kafka's internal partition log folder
+
+  kafka-ui:                                                  # Service identifier for the web-based Kafka management interface
+    image: provectuslabs/kafka-ui:latest                     # Pulls the latest web GUI container image from Provectus Labs
+    container_name: kafka_ui                                 # Assigns a fixed container name for the web interface
+    ports:                                                   # Maps web dashboard access port
+      - "8080:8080"                                          # Maps container port 8080 to http://localhost:8080 in your browser
+    environment:                                             # Environment settings configuring Kafka UI behavior
+      KAFKA_CLUSTERS_0_NAME: local-kraft-cluster             # Display label assigned to this Kafka cluster in the browser dashboard
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092          # Bootstrap broker connection URL using Docker's internal container DNS ('kafka')
+      DYNAMIC_CONFIG_ENABLED: "true"                         # Allows dynamically altering topic configs and cluster settings via web GUI
+    depends_on:                                              # Enforces container execution startup sequence
+      - kafka                                                # Delays Kafka UI initialization until the 'kafka' broker container starts
+
+volumes:                                                     # Top-level section declaring Docker-managed persistent volumes
+  kafka_data:                                                # Named volume allocating persistent disk storage for Kafka broker commit logs
