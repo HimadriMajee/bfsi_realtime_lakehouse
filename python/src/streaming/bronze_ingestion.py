@@ -1,196 +1,219 @@
 """
-================================================================================
-BFSI REAL-TIME DATA LAKEHOUSE: BRONZE STREAMING INGESTION (COMPLETE PRODUCTION FILE)
-================================================================================
-Architecture Layer : Bronze (Raw Landing Zone)
-Source System      : Local Apache Kafka KRaft Broker (Multi-Topic Domain Stream)
-Target Storage     : AWS S3 Delta Lake Table (s3a://.../bronze/kafka_raw_transactions)
-Catalog Engine     : AWS Glue Data Catalog (bfsi_financial_risk_db)
+====================================================================================================
+BFSI REAL-TIME DATA LAKEHOUSE: BRONZE STREAMING INGESTION PIPELINE
+====================================================================================================
+File Name   : python/src/streaming/bronze_ingestion.py
+Layer       : Bronze Layer (Raw Streaming Ingestion)
+Source      : Kafka Broker (bfsi-retail-transactions, bfsi-highrisk-transactions, bfsi-travel-transactions)
+Sink        : S3 Bronze Delta Table (s3a://.../bronze/kafka_raw_transactions)
 
-Pipeline Mechanics :
-  - Consumes raw event payloads across 3 domain topics simultaneously.
-  - Registers 'pyspark-bronze-consumer-group' so active consumer metrics are visible in Kafka UI (http://localhost:8080).
-  - Bypasses Windows C++ DLL permission errors using bytebuffer S3A staging.
-  - Preserves immutable raw JSON strings without filtering or schema enforcement.
-  - Captures message metadata (topic, partition, offset, timestamp) for auditability.
-  - Uses S3 Delta Lake checkpointing for fault-tolerant at-least-once delivery.
-  - Explicitly names the streaming query for visual inspection in Spark Web UI (http://localhost:4040).
-================================================================================
+Pipeline Mechanics:
+  - Dynamically configures local JDK 17, Hadoop binaries, and .env AWS credentials.
+  - Subscribes to 3 real-time transaction topics on Kafka.
+  - Micro-batches raw JSON streams as-is without dropping or transforming attributes.
+  - Appends raw records and Kafka metadata (topic, partition, offset, timestamp) to S3 Bronze.
+  - Uses Delta ACID checkpoints for fault-tolerant, exactly-once processing recovery.
+
+====================================================================================================
+PRODUCTION BOTTLENECK ANALYSIS & REAL-TIME OPERATIONAL ISSUES
+====================================================================================================
+1. BOTTLENECK: Small File Problem (S3 Metadata & I/O Overhead)
+   - ISSUE: High-frequency low-latency micro-batches create thousands of tiny 10-KB Parquet files 
+     in S3, degrading Athena/Spark read query performance and driving up S3 GET/PUT API costs.
+   - RESOLUTION: Configure Delta Auto-Optimize and Auto-Compact:
+     spark.databricks.delta.optimizeWrite.enabled=true
+     spark.databricks.delta.autoCompact.enabled=true
+     Or schedule periodic OPTIMIZE / VACUUM jobs out-of-band.
+
+2. REAL-TIME ISSUE: Kafka Consumer Rebalancing & Backpressure
+   - ISSUE: Spikes in transaction volume can overwhelm Spark executors, causing GC pauses, 
+     missed heartbeat signals, consumer group rebalances, and stream processing lag.
+   - RESOLUTION: Enforce backpressure limits via Spark configuration:
+     spark.streaming.kafka.maxRatePerPartition=5000
+     This caps the max records read per batch partition to prevent Out-Of-Memory (OOM) errors.
+
+3. REAL-TIME ISSUE: Schema Drift in Source Kafka Messages
+   - ISSUE: Upstream producers modify JSON payloads (add/delete/rename fields), breaking rigid downstream schemas.
+   - RESOLUTION: In the Bronze layer, store raw JSON as an unparsed STRING or standard Binary column. 
+     Defer schema enforcement to the Silver layer (Schema-on-Read / Late Binding pattern).
+
+4. REAL-TIME ISSUE: Poison Pill / Malformed Records
+   - ISSUE: Non-JSON or corrupted byte arrays in Kafka cause JSON parsers to throw runtime exceptions.
+   - RESOLUTION: Keep raw payloads untouched in Bronze. Cleanse and filter or quarantine malformed 
+     records to a Dead Letter Queue (DLQ) during Silver transformation.
+
+====================================================================================================
+SENIOR DATA ENGINEER INTERVIEW PREPARATION (BASIC TO ADVANCED Q&A)
+====================================================================================================
+Q1 (Basic): What is the purpose of the Bronze layer in a Medallion Architecture?
+    - Answer: To preserve immutable, raw source data in its native format alongside ingestion metadata
+      (Kafka offset, partition, ingestion timestamp). It acts as an audit log and enables historical
+      reprocessing without re-querying upstream transactional systems.
+
+Q2 (Intermediate): How does Delta Lake guarantee exactly-once processing during streaming ingestion?
+    - Answer: Delta Lake combines Spark Structured Streaming's Write-Ahead Logging (WAL) and 
+      checkpointing with Delta's ACID transaction log (_delta_log). Each micro-batch commit is atomic; 
+      if a driver crashes, Spark resumes from the exact offset logged in the S3 checkpoint.
+
+Q3 (Intermediate): Why use s3a:// instead of s3:// or s3n:// in PySpark?
+    - Answer: s3a:// uses the modern Hadoop S3A file system driver supporting high-performance 
+      multipart parallel uploads, IAM role authentication, and high throughput for large file systems.
+
+Q4 (Advanced): How do you address the "Small File Problem" caused by continuous micro-batch writes?
+    - Answer: By running asynchronous background compaction (`OPTIMIZE` command) to merge small 
+      files into 1GB files, and executing `VACUUM` to remove stale historical files past retention limits.
+====================================================================================================
 """
 
-# Importing standard operating system module for path resolution and environment variable settings
-import os
-# Importing system parameters module
-import sys
-# Importing main PySpark SQL entry point class to configure distributed DataFrame sessions
-from pyspark.sql import SparkSession
-# Importing PySpark SQL functions for column transformations and capturing current ingestion timestamps
-from pyspark.sql.functions import col, current_timestamp
-# Importing Delta Lake configuration helper to inject Delta dependencies into PySpark
-from delta import configure_spark_with_delta_pip
+import os                                         # Operating system interface for environment variables and paths
+import sys                                        # System parameters and stream management
+import logging                                    # Python standard logging library
+from dotenv import load_dotenv                    # Module to parse and load .env files into environment
 
-# ==============================================================================
-# WINDOWS OS COMPATIBILITY FIX (HADOOP_HOME & WINUTILS)
-# ==============================================================================
-# Resolves the root project directory dynamically
+# --------------------------------------------------------------------------------------------------
+# STEP 1: MUTE VERBOSE LOGGERS
+# --------------------------------------------------------------------------------------------------
+# Reduce internal JVM and Py4J logging to prevent console spam
+logging.getLogger("py4j").setLevel(logging.ERROR)
+logging.getLogger("pyspark").setLevel(logging.ERROR)
+
+# --------------------------------------------------------------------------------------------------
+# STEP 2: DYNAMIC ENVIRONMENT & PATH RESOLUTION
+# --------------------------------------------------------------------------------------------------
+# Compute repository root path dynamically by navigating 3 directory levels up from this file
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
-# Automatically configures HADOOP_HOME to point to local ./hadoop folder on Windows machines
+ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
+
+# Force-load AWS IAM keys (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION)
+if os.path.exists(ENV_PATH):
+    load_dotenv(ENV_PATH)
+    print(f"[*] Loaded AWS Credentials from: {ENV_PATH}")
+else:
+    load_dotenv()
+
+# Configure local JDK 17 environment paths for Spark driver/executor processes on Windows
+LOCAL_JDK_DIR = os.path.join(PROJECT_ROOT, "jdk-17.0.10+7")
+if os.path.exists(LOCAL_JDK_DIR):
+    os.environ["JAVA_HOME"] = LOCAL_JDK_DIR
+    os.environ["PATH"] = os.path.join(LOCAL_JDK_DIR, "bin") + os.path.pathsep + os.environ.get("PATH", "")
+
+# Configure local Hadoop winutils paths for local file system emulation
 LOCAL_HADOOP_DIR = os.path.join(PROJECT_ROOT, "hadoop")
 if os.path.exists(LOCAL_HADOOP_DIR):
     os.environ["HADOOP_HOME"] = LOCAL_HADOOP_DIR
     os.environ["PATH"] += os.path.pathsep + os.path.join(LOCAL_HADOOP_DIR, "bin")
 
-# ==============================================================================
-# CONFIGURATION CONSTANTS
-# ==============================================================================
-# Globally unique AWS S3 Bucket Name for storing Medallion Delta tables and checkpoints
-S3_BUCKET = "bp-bfsi-realtime-lakehouse-245987718167-ap-southeast-5-an"
-
-# External host listener address and port mapped in Docker Compose for Kafka broker traffic
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9094"
-
-# Multi-topic ingestion subscription list formatted as a comma-separated string
-KAFKA_TOPICS = (
-    "bfsi-retail-transactions,"
-    "bfsi-highrisk-transactions,"
-    "bfsi-travel-transactions"
-)
-
-# Target Delta Lake storage location in AWS S3 for raw Bronze records
-BRONZE_S3_PATH = f"s3a://{S3_BUCKET}/bronze/kafka_raw_transactions"
-# Target S3 path for PySpark Structured Streaming offset checkpoints
-CHECKPOINT_PATH = f"s3a://{S3_BUCKET}/checkpoints/bronze_ingestion"
+# Import Spark dependencies after environment paths are fully bound
+from pyspark.sql import SparkSession             # Entry point to Spark SQL and Structured Streaming functionality
+from pyspark.sql.functions import col, current_timestamp  # Functions for column manipulation and system time
+from delta import configure_spark_with_delta_pip  # Helper to download and bind Delta Lake JAR packages
 
 
+# --------------------------------------------------------------------------------------------------
+# STEP 3: SPARK SESSION BUILDER
+# --------------------------------------------------------------------------------------------------
 def create_spark_session() -> SparkSession:
     """
-    Initializes and returns a SparkSession configured with Delta Lake extensions,
-    Kafka Structured Streaming connectors, and Apache Hadoop AWS S3 drivers.
+    Initializes a SparkSession pre-configured with Delta Lake extensions, Kafka connectors,
+    and Hadoop S3A file system drivers for AWS integration.
     """
-    # Print status message indicating SparkSession initialization step
-    print("[*] Initializing Spark Session with Delta Lake & Kafka connectors...")
-    
-    # Define additional Maven package coordinates for Kafka streaming and Hadoop AWS S3 access
+    print("[*] Initializing Spark Session for Bronze Ingestion Layer...")
+
+    # Define Maven package dependencies required for Kafka, AWS S3, and Delta Lake
     extra_packages = [
-        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
-        "org.apache.hadoop:hadoop-aws:3.3.4"
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",  # Spark-Kafka integration library
+        "org.apache.hadoop:hadoop-aws:3.3.4",                 # AWS S3A file system connector
+        "io.delta:delta-spark_2.12:3.1.0"                     # Delta Lake core engine
     ]
-    
-    # Start building the base SparkSession configuration
+
     builder = (
-        # Obtain existing SparkSession or create a new builder instance
         SparkSession.builder
-        # Set application name displayed in Spark UI and job logs
-        .appName("BFSI_Bronze_Ingestion_Pipeline")
-        # Enable Delta Lake SQL extensions inside PySpark
+        .appName("BFSI_Bronze_Kafka_Ingestion_Pipeline")      # Set application identifier in Spark UI
+        # Register Delta Lake SQL extensions and catalog handlers
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        # Set Delta Catalog as default catalog implementation for Spark catalog operations
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        # Register S3A FileSystem driver implementation class for s3a:// URI scheme resolution
+        # Configure Hadoop S3A FileSystem implementation
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        # USE IN-MEMORY FAST UPLOAD BUFFERING (Bypasses Windows disk allocator & NativeIO DLL errors)
-        .config("spark.hadoop.fs.s3a.fast.upload", "true")
+        .config("spark.hadoop.fs.s3a.fast.upload", "true")     # Enable high-throughput memory buffer for uploads
         .config("spark.hadoop.fs.s3a.fast.upload.buffer", "bytebuffer")
-        # DISABLE WINDOWS C++ NATIVE DLL PERMISSION CALLS
-        .config("spark.hadoop.io.nativeio.enabled", "false")
-        # Instruct Hadoop AWS driver to retrieve credentials from active environment variables
+        .config("spark.hadoop.io.nativeio.enabled", "false")   # Disable Windows-native C++ IO libraries
+        # Bind AWS authentication to environment variables
         .config(
             "spark.hadoop.fs.s3a.aws.credentials.provider",
             "com.amazonaws.auth.EnvironmentVariableCredentialsProvider"
         )
     )
-    
-    # Inject Delta Lake dependencies and extra packages, then build/return active SparkSession
+
+    # Attach Maven packages and instantiate SparkSession instance
     return configure_spark_with_delta_pip(
         builder,
         extra_packages=extra_packages
     ).getOrCreate()
 
 
+# --------------------------------------------------------------------------------------------------
+# STEP 4: MAIN STREAMING EXECUTION PIPELINE
+# --------------------------------------------------------------------------------------------------
 def main():
-    """
-    Main execution entry point for PySpark Bronze Streaming Ingestion Pipeline.
-    """
-    # Call function to initialize and retrieve configured SparkSession
+    # Initialize Spark Session
     spark = create_spark_session()
-    # Reduce console log verbosity to WARN to highlight critical operational logs
-    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.setLogLevel("WARN")  # Mute noisy INFO-level execution logs
 
-    # Print status message displaying target Kafka broker endpoint
-    print(f"[*] Reading raw streams from Kafka broker: {KAFKA_BOOTSTRAP_SERVERS}")
-    # Print status message displaying subscribed Kafka domain topics
-    print(f"[*] Subscribed Topics: {KAFKA_TOPICS}")
+    # Pipeline Constants
+    KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+    KAFKA_TOPICS = "bfsi-retail-transactions,bfsi-highrisk-transactions,bfsi-travel-transactions"
 
-    # Step 1: Initialize streaming DataFrame reader for Kafka multi-topic source
+    S3_BUCKET = "bp-bfsi-realtime-lakehouse-245987718167-ap-southeast-5-an"
+    BRONZE_S3_PATH = f"s3a://{S3_BUCKET}/bronze/kafka_raw_transactions"
+    CHECKPOINT_PATH = f"s3a://{S3_BUCKET}/checkpoints/bronze_ingestion"
+
+    print(f"[*] Subscribing to Kafka Topics: {KAFKA_TOPICS}")
+    print(f"[*] Target S3 Bronze Path: {BRONZE_S3_PATH}")
+
+    # Read Streaming Stream from Kafka Topics
     kafka_stream = (
-        # Access Structured Streaming read interface
         spark.readStream
-        # Specify 'kafka' as the streaming source format driver
-        .format("kafka")
-        # Set Kafka bootstrap servers broker connection option
-        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
-        # Set subscription option to listen to multiple comma-separated topics simultaneously
-        .option("subscribe", KAFKA_TOPICS)
-        # Explicitly assign Consumer Group ID so Kafka UI (http://localhost:8080) can track consumer lag
-        .option("kafka.group.id", "pyspark-bronze-consumer-group")
-        # Configure stream to read from the earliest available offset on cold start
-        .option("startingOffsets", "earliest")
-        # Prevent streaming pipeline failure if Kafka topic log retention truncates offsets
-        .option("failOnDataLoss", "false")
-        # Load options and return a streaming DataFrame object
+        .format("kafka")                                        # Specify Kafka source connector
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) # Kafka broker network addresses
+        .option("subscribe", KAFKA_TOPICS)                     # Comma-separated topics to ingest
+        .option("startingOffsets", "earliest")                 # Consume from beginning if checkpoint absent
+        .option("failOnDataLoss", "false")                     # Prevent job failure if Kafka topic retention expires
         .load()
     )
 
-    # Step 2: Transform raw binary streams into structured string fields & preserve metadata
-    bronze_df = kafka_stream.select(
-        # Cast message key from BINARY to STRING and alias as kafka_key
-        col("key").cast("STRING").alias("kafka_key"),
-        # Cast message value from BINARY to STRING and alias as raw_payload (preserves unparsed JSON)
-        col("value").cast("STRING").alias("raw_payload"),
-        # Select original source Kafka topic name string
-        col("topic").alias("kafka_topic"),
-        # Select original source Kafka partition integer ID
-        col("partition").alias("kafka_partition"),
-        # Select original source Kafka record offset long integer value
-        col("offset").alias("kafka_offset"),
-        # Select Kafka message producer timestamp
-        col("timestamp").alias("kafka_timestamp"),
-        # Generate current system timestamp to log exact PySpark ingestion time
-        current_timestamp().alias("ingestion_timestamp")
+    # Cast Kafka Binary Value to String and Append Ingestion Audit Metadata
+    raw_bronze_df = (
+        kafka_stream
+        .select(
+            col("value").cast("STRING").alias("raw_payload"),   # Convert binary message payload to raw JSON string
+            col("topic").alias("kafka_topic"),                 # Extract source topic name
+            col("partition").alias("kafka_partition"),         # Extract Kafka partition ID
+            col("offset").alias("kafka_offset"),               # Extract message offset position
+            col("timestamp").alias("kafka_timestamp"),         # Extract event timestamp from Kafka header
+            current_timestamp().alias("bronze_ingested_at")    # Stamp exact UTC execution time of ingestion
+        )
     )
 
-    # Print target S3 Delta output storage destination
-    print(f"[*] Starting Bronze Delta stream write to: {BRONZE_S3_PATH}")
-    # Print S3 offset checkpoint location path
-    print(f"[*] Checkpointing configured at: {CHECKPOINT_PATH}")
+    print(f"[*] Starting Micro-Batch Streaming Write to S3 Delta Bronze...")
 
-    # Step 3: Write streaming DataFrame to AWS S3 in Delta Lake format
+    # Write Micro-Batches to S3 Bronze Delta Table
     query = (
-        # Access Structured Streaming write interface
-        bronze_df.writeStream
-        # Set destination table format to Delta Lake
-        .format("delta")
-        # Explicitly name the query for clear tracking in Spark Web UI (http://localhost:4040)
-        .queryName("BronzeKafkaIngestionStream")
-        # Set output mode to 'append' (standard for immutable append-only event streams)
-        .outputMode("append")
-        # Set checkpoint directory location in S3 for fault-tolerant state recovery
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        # Start streaming execution and target S3 bucket location
-        .start(BRONZE_S3_PATH)
+        raw_bronze_df.writeStream
+        .format("delta")                                       # Target storage engine (Delta Lake)
+        .outputMode("append")                                  # Append new micro-batches atomically
+        .option("checkpointLocation", CHECKPOINT_PATH)         # Write-Ahead Log offset checkpointing directory
+        .queryName("BronzeKafkaIngestionQuery")                # Assign explicit query identifier for UI tracking
+        .start(BRONZE_S3_PATH)                                 # Begin background streaming execution to S3 URI
     )
 
-    # Print success message indicating active streaming query startup
-    print("[✔] Bronze Ingestion Stream started successfully! Streaming active...")
-    print("[*] Open http://localhost:4040 to view real-time query metrics in Spark Web UI.")
-    print("[*] Open http://localhost:8080 to monitor 'pyspark-bronze-consumer-group' in Kafka UI.")
-    # Keep streaming query thread alive and await manual or system termination signals
+    print("[✔] Bronze Ingestion Pipeline active! Catching up on pending Kafka records...")
+    print("[*] Monitoring streaming metrics at http://localhost:4040 (Spark Web UI)")
+
+    # Keep stream active and listen for incoming micro-batches
     query.awaitTermination()
 
 
-# Python standard script execution entry point
 if __name__ == "__main__":
-    # Execute main function when script is invoked directly
     main()
 
 
