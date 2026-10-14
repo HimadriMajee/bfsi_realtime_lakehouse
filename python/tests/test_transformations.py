@@ -1,10 +1,3 @@
-The traceback shows `take(10)` failed because under the hood PySpark's Scala engine calls `take(num)` by executing `self.limit(num).collect()`, which delegates to `collectToPython()`. On Windows with Python 3.12, any call invoking `collectToPython()` crashes the Python worker socket process during data serialization.
-
-To fix this completely, evaluate transformations using pure Spark SQL / Catalyst expressions via **`spark.sql(...)`** or convert the DataFrame directly into a Pandas DataFrame using Arrow/JVM collectors (**`toPandas()`**) or localized Spark SQL temporary views.
-
-Here is the updated `python/tests/test_transformations.py` file with code comments explaining each line, root cause analysis, interview preparation Q&As, and potential architectural extensions.
-
-```python
 """
 ====================================================================================================
 BFSI REAL-TIME DATA LAKEHOUSE: UNIT TESTS FOR STREAMING TRANSFORMATIONS
@@ -92,21 +85,21 @@ python_exe = os.path.normpath(sys.executable)
 
 # Forces local loopback IP binding for PySpark driver/executor network IPC.
 # WHY: Prevents PySpark from attempting external network interface resolution, avoiding Windows firewall prompts.
-os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
-os.environ["SPARK_LOCAL_HOSTNAME"] = "127.0.0.1"
+os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"         # Sets the IP address Spark binds its local services to.
+os.environ["SPARK_LOCAL_HOSTNAME"] = "127.0.0.1"   # Sets the hostname Spark advertises to itself (loopback only).
 
 # Explicitly sets the Python interpreter path for both PySpark Driver and Executors.
 # WHY: Ensures Spark workers execute inside the virtual environment (`venv`) rather than falling back to system Python.
-os.environ["PYSPARK_PYTHON"] = python_exe
-os.environ["PYSPARK_DRIVER_PYTHON"] = python_exe
+os.environ["PYSPARK_PYTHON"] = python_exe          # Interpreter used by Spark executors (Python workers).
+os.environ["PYSPARK_DRIVER_PYTHON"] = python_exe   # Interpreter used by the Spark driver process.
 
 # Forces standard stdout/stderr stream flushing.
 # WHY: Ensures real-time console log printing during CI/CD test execution runs.
-os.environ["PYTHONUNBUFFERED"] = "1"
+os.environ["PYTHONUNBUFFERED"] = "1"               # Disables Python output buffering so logs appear immediately.
 
 # Dynamically checks for local JDK 17 binary folder in project root.
-LOCAL_JDK_DIR = os.path.join(PROJECT_ROOT, "jdk-17.0.10+7")
-if os.path.exists(LOCAL_JDK_DIR):
+LOCAL_JDK_DIR = os.path.join(PROJECT_ROOT, "jdk-17.0.10+7")   # Builds the expected path of a bundled JDK folder.
+if os.path.exists(LOCAL_JDK_DIR):                              # Only applies the override if the folder exists.
     # Sets JAVA_HOME to local JDK path.
     # WHY: Ensures Spark runs on Java 17 without requiring system-wide JAVA_HOME configuration.
     os.environ["JAVA_HOME"] = os.path.normpath(LOCAL_JDK_DIR)
@@ -115,8 +108,8 @@ if os.path.exists(LOCAL_JDK_DIR):
     os.environ["PATH"] = os.path.normpath(os.path.join(LOCAL_JDK_DIR, "bin")) + os.path.pathsep + os.environ.get("PATH", "")
 
 # Dynamically checks for local Hadoop folder containing native Windows binaries (`winutils.exe`).
-LOCAL_HADOOP_DIR = os.path.join(PROJECT_ROOT, "hadoop")
-if os.path.exists(LOCAL_HADOOP_DIR):
+LOCAL_HADOOP_DIR = os.path.join(PROJECT_ROOT, "hadoop")        # Builds the expected path of a bundled Hadoop folder.
+if os.path.exists(LOCAL_HADOOP_DIR):                           # Only applies the override if the folder exists.
     # Sets HADOOP_HOME environment variable.
     # WHY: Satisfies Spark's dependency on Hadoop filesystem abstractions on Windows.
     os.environ["HADOOP_HOME"] = os.path.normpath(LOCAL_HADOOP_DIR)
@@ -125,20 +118,20 @@ if os.path.exists(LOCAL_HADOOP_DIR):
     os.environ["PATH"] = os.path.normpath(os.path.join(LOCAL_HADOOP_DIR, "bin")) + os.path.pathsep + os.environ.get("PATH", "")
 
 # Imports PySpark DataFrame module components after environment variables are set.
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession  # Entry point class used to create the Spark session.
 
 
 # --------------------------------------------------------------------------------------------------
 # STEP 2: PYTEST SPARK SESSION FIXTURE WITH WINDOWS DAEMON WORKAROUND
 # --------------------------------------------------------------------------------------------------
-@pytest.fixture(scope="session")
-def spark():
+@pytest.fixture(scope="session")  # Registers a fixture created once and shared by every test in the run.
+def spark():                      # Fixture function; tests receive the session by naming it as an argument.
     """
     Instantiates a local SparkSession configured to bypass Python daemon socket crashes.
     Scope='session' ensures a single SparkContext is initialized and shared across all tests in the suite.
     """
     session = (
-        SparkSession.builder
+        SparkSession.builder  # Starts the fluent builder used to configure the session.
         # Sets application label visible in log outputs.
         .appName("BFSI_Lakehouse_UnitTests")
         
@@ -148,8 +141,8 @@ def spark():
         
         # Binds driver host explicitly to loopback interface.
         # WHY: Prevents port binding collisions on Windows local builds.
-        .config("spark.driver.host", "127.0.0.1")
-        .config("spark.driver.bindAddress", "127.0.0.1")
+        .config("spark.driver.host", "127.0.0.1")          # Address executors use to reach the driver.
+        .config("spark.driver.bindAddress", "127.0.0.1")   # Address the driver listens on.
         
         # Reduces default shuffle partition count from 200 to 1.
         # WHY: Accelerates local test execution by avoiding unnecessary partition creation for tiny mock datasets.
@@ -170,85 +163,69 @@ def spark():
         # Disables Hadoop native C++ file I/O libraries.
         # WHY: Prevents `UnsatisfiedLinkError` warnings on Windows systems missing raw Hadoop native DLLs.
         .config("spark.hadoop.io.nativeio.enabled", "false")
-        .getOrCreate()
+        .getOrCreate()  # Creates the session, or returns the existing one if already running.
     )
     # Delivers active Spark session instance to test functions.
-    yield session
+    yield session  # Hands the session to tests; code after this line runs at teardown.
     
     # Gracefully shuts down SparkContext after all test functions complete.
     # WHY: Frees system RAM and releases local network socket bindings.
-    session.stop()
+    session.stop()  # Stops the SparkContext and releases JVM resources.
 
 
 # --------------------------------------------------------------------------------------------------
-# STEP 3: UNIT TEST CASES (USING SPARK SQL ENGINE TO BYPASS Python Worker Sockets)
+# STEP 3: UNIT TEST CASES (TEST DATA BUILT INSIDE THE JVM VIA SQL `VALUES`, NO PYTHON WORKER NEEDED)
 # --------------------------------------------------------------------------------------------------
-def test_pii_masking_transformation(spark):
+def test_pii_masking_transformation(spark):  # PyTest discovers this by the `test_` prefix; `spark` is the fixture.
     """Test 1: Verifies raw account numbers are correctly anonymized into SHA-256 hex digests."""
-    # Define sample raw in-memory test rows.
-    data = [("ACC12345", "John Doe", 1500.00), ("ACC67890", "Jane Smith", 2500.50)]
-    # Define explicitly named schema string attributes.
-    schema = ["account_number", "customer_name", "amount"]
-    
-    # Converts mock list data into a PySpark DataFrame.
-    raw_df = spark.createDataFrame(data, schema)
-    
-    # Registers DataFrame as a temporary in-memory SQL View.
-    # WHY: Allows expression execution inside Spark's JVM Catalyst engine, avoiding Python socket serialization.
-    raw_df.createOrReplaceTempView("v_raw_accounts")
-    
-    # Executes SQL expression using native JVM `sha2` and `concat` functions.
-    transformed_df = spark.sql("""
-        SELECT 
-            account_number,
-            customer_name,
-            amount,
-            sha2(concat(account_number, '||bfsi_salt_2026'), 256) AS masked_account_id
+    # Builds the mock input table directly in Spark SQL using an inline VALUES clause.
+    # WHY: `spark.createDataFrame(list)` pickles rows and needs a Python worker, which crashes on
+    #      Windows + Python 3.12. VALUES is evaluated entirely inside the JVM, so no Python worker starts.
+    spark.sql("""
+        SELECT * FROM VALUES
+            ('ACC12345', 'John Doe', 1500.00),
+            ('ACC67890', 'Jane Smith', 2500.50)
+        AS t(account_number, customer_name, amount)
+    """).createOrReplaceTempView("v_raw_accounts")  # Registers the result as a temp view named v_raw_accounts.
+
+    # Applies the PII masking transformation using native JVM `sha2` and `concat` functions.
+    df = spark.sql("""
+        SELECT account_number, customer_name, amount,
+               sha2(concat(account_number, '||bfsi_salt_2026'), 256) AS masked_account_id
         FROM v_raw_accounts
-    """)
-    
-    # Collects output via Spark SQL JVM collector.
-    results = transformed_df.collect()
-    
-    # Assert row count matches input record count.
-    assert len(results) == 2
-    # Assert generated SHA-256 string length equals standard 64 hex characters.
-    assert len(results[0]["masked_account_id"]) == 64
-    # Assert original account numbers are no longer present in masked field.
-    assert results[0]["masked_account_id"] != "ACC12345"
-    assert results[1]["masked_account_id"] != "ACC67890"
+    """)  # Returns a DataFrame with an extra salted SHA-256 column; nothing executes until an action runs.
+
+    # Asserts the new masked column exists in the output schema.
+    assert "masked_account_id" in df.columns
+    # Executes the query and brings the result rows back to the driver as a list of Row objects.
+    rows = df.collect()
+    # Asserts the output row count matches the 2 input records.
+    assert len(rows) == 2
+    # Asserts every masked value is exactly 64 characters (SHA-256 hex digest length).
+    assert all(len(r["masked_account_id"]) == 64 for r in rows)
+    # Asserts no masked value equals the original account number (proves the raw value was replaced).
+    assert all(r["masked_account_id"] != r["account_number"] for r in rows)
 
 
-def test_anomaly_flagging_logic(spark):
+def test_anomaly_flagging_logic(spark):  # Second test; reuses the same session-scoped Spark fixture.
     """Test 2: Verifies Gold risk classification flags window volumes > $10,000 USD as HIGH_RISK_SPIKE."""
-    # Define sample numerical volume records.
-    data = [(12000.00, "TRANSFER"), (4500.00, "RETAIL")]
-    schema = ["total_volume_usd", "transaction_type"]
-    
-    # Create DataFrame from raw test array.
-    df = spark.createDataFrame(data, schema)
-    
-    # Registers DataFrame as a temporary in-memory SQL View.
-    df.createOrReplaceTempView("v_risk_transactions")
-    
-    # Applies conditional classification logic using native SQL CASE statement.
-    result_df = spark.sql("""
-        SELECT 
-            total_volume_usd,
-            transaction_type,
-            CASE 
-                WHEN total_volume_usd > 10000 THEN 'HIGH_RISK_SPIKE'
-                ELSE 'NORMAL'
-            END AS risk_classification
+    # Builds the mock transaction table inside the JVM using an inline VALUES clause (no Python worker).
+    spark.sql("""
+        SELECT * FROM VALUES (12000.00, 'TRANSFER'), (4500.00, 'RETAIL')
+        AS t(total_volume_usd, transaction_type)
+    """).createOrReplaceTempView("v_risk_transactions")  # Registers the table as temp view v_risk_transactions.
+
+    # Applies the risk classification rule and executes the query.
+    rows = spark.sql("""
+        SELECT total_volume_usd,
+               CASE WHEN total_volume_usd > 10000 THEN 'HIGH_RISK_SPIKE' ELSE 'NORMAL' END AS risk_classification
         FROM v_risk_transactions
-    """)
-    
-    # Safely fetch result rows.
-    rows = result_df.collect()
-    
-    # Assert transaction exceeding threshold ($12,000) is flagged as HIGH_RISK_SPIKE.
+        ORDER BY total_volume_usd DESC
+    """).collect()  # ORDER BY DESC guarantees row 0 is the 12000 record, so the assertions are deterministic.
+
+    # Asserts the transaction above the $10,000 threshold ($12,000) is flagged as HIGH_RISK_SPIKE.
     assert rows[0]["risk_classification"] == "HIGH_RISK_SPIKE"
-    # Assert transaction below threshold ($4,500) is flagged as NORMAL.
+    # Asserts the transaction below the threshold ($4,500) is flagged as NORMAL.
     assert rows[1]["risk_classification"] == "NORMAL"
 
 # --------------------------------------------------------------------------------------------------
@@ -270,5 +247,3 @@ def test_anomaly_flagging_logic(spark):
 #    - Containerize the testing environment on Linux-based Docker images (`python:3.12-slim` + `OpenJDK 17`).
 #      Linux environments use native Unix domain sockets, completely eliminating Windows-specific socket 
 #      and daemon issues in automated deployment pipelines.
-
-```
