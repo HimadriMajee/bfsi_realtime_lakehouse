@@ -70,9 +70,9 @@ def sync_aws_glue_catalog():
     Idempotently checks and synchronizes Glue Database and Delta Table Schema 
     with the AWS Glue Data Catalog. Handles invalid AWS local keys gracefully.
     """
-    database_name = "bfsi_lakehouse_catalog"
+    database_name = "bfsi_financial_risk_db"
     table_name = "gold_risk_summary"
-    region = "us-east-1"
+    region = "ap-southeast-5"
 
     logger.info(f"Initiating AWS Glue Data Catalog sync for Database: {database_name}, Table: {table_name}")
 
@@ -140,8 +140,8 @@ def run_athena_verification():
     Submits an analytical verification query to Amazon Athena targeting 
     the synchronized Glue Catalog Gold table.
     """
-    region = "us-east-1"
-    database_name = "bfsi_lakehouse_catalog"
+    region = "ap-southeast-5"
+    database_name = "bfsi_financial_risk_db"
     s3_output = "s3://bfsi-realtime-lakehouse-prod-s3/athena_results/"
 
     # Risk aggregation query over the Gold layer

@@ -180,13 +180,13 @@ def sync_aws_glue_catalog():
     gold_prefix = "gold/"
     
     # Step 8c: Set Glue catalog database identifier
-    database_name = "bfsi_lakehouse_catalog"
+    database_name = "bfsi_financial_risk_db"
     
     # Step 8d: Set target Gold table identifier
     table_name = "gold_risk_summary"
     
     # Step 8e: Set AWS target region
-    region = "us-east-1"
+    region = "ap-southeast-5"
 
     # Step 8f: Log start of Glue synchronization step
     logger.info(f"Synchronizing Glue Catalog metadata for Database: {database_name}, Table: {table_name}")
@@ -249,10 +249,10 @@ def sync_aws_glue_catalog():
 def run_athena_verification():
     """Submits analytical risk aggregation query execution to Amazon Athena."""
     # Step 9a: Set AWS target region
-    region = "us-east-1"
+    region = "ap-southeast-5"
     
     # Step 9b: Specify target Glue catalog database
-    database_name = "bfsi_lakehouse_catalog"
+    database_name = "bfsi_financial_risk_db"
     
     # Step 9c: Define S3 bucket output path for Athena query result CSV artifacts
     s3_output = "s3://bfsi-realtime-lakehouse-prod-s3/athena_results/"

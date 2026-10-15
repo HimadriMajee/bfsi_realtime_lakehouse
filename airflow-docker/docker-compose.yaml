@@ -56,8 +56,8 @@ x-airflow-common:
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     
     # AWS Credentials passed to containers for Boto3 SDK execution
-    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-mock_key}
-    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-mock_secret}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
     AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
 
   # Volume Mounts: Bind host workspace directories directly into container paths

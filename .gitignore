@@ -34,3 +34,7 @@ __pycache__/
 # Local spreadsheets / temporary files
 Doubts.xlsx
 .DS_Store
+
+# Security & Secrets
+.env
+*.env
