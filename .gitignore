@@ -20,3 +20,17 @@ Thumbs.db
 # Environment & Secret Files
 .env
 *.pem
+
+# Airflow dynamic logs & state
+airflow-docker/logs/
+airflow-docker/plugins/
+*.log
+
+# Python virtual environment & cache
+venv/
+__pycache__/
+*.pyc
+
+# Local spreadsheets / temporary files
+Doubts.xlsx
+.DS_Store
