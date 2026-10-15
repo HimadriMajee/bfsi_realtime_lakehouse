@@ -673,3 +673,31 @@
 [2026-10-15T05:19:48.348+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:19:48.347+0000] {dag.py:3036} INFO - Sync 1 DAGs
 [2026-10-15T05:19:48.427+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:19:48.427+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_quality_and_orchestration_pipeline to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
 [2026-10-15T05:19:48.502+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/data_quality_reconciliation_dag.py took 0.493 seconds
+[2026-10-15T05:20:19.102+0000] {processor.py:161} INFO - Started process (PID=1334) to work on /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:20:19.106+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/data_quality_reconciliation_dag.py for tasks to queue
+[2026-10-15T05:20:19.110+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:19.109+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:20:19.269+0000] {processor.py:840} INFO - DAG(s) 'bfsi_quality_and_orchestration_pipeline' retrieved from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:20:19.322+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:19.322+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:20:19.375+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:19.375+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_quality_and_orchestration_pipeline to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:20:19.416+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/data_quality_reconciliation_dag.py took 0.323 seconds
+[2026-10-15T05:20:50.120+0000] {processor.py:161} INFO - Started process (PID=1344) to work on /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:20:50.124+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/data_quality_reconciliation_dag.py for tasks to queue
+[2026-10-15T05:20:50.128+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:50.127+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:20:50.323+0000] {processor.py:840} INFO - DAG(s) 'bfsi_quality_and_orchestration_pipeline' retrieved from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:20:50.374+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:50.374+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:20:50.421+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:50.421+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_quality_and_orchestration_pipeline to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:20:50.464+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/data_quality_reconciliation_dag.py took 0.358 seconds
+[2026-10-15T05:21:21.268+0000] {processor.py:161} INFO - Started process (PID=1354) to work on /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:21:21.272+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/data_quality_reconciliation_dag.py for tasks to queue
+[2026-10-15T05:21:21.275+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:21.274+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:21:21.464+0000] {processor.py:840} INFO - DAG(s) 'bfsi_quality_and_orchestration_pipeline' retrieved from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:21:21.549+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:21.548+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:21:21.612+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:21.612+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_quality_and_orchestration_pipeline to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:21:21.657+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/data_quality_reconciliation_dag.py took 0.396 seconds
+[2026-10-15T05:21:52.429+0000] {processor.py:161} INFO - Started process (PID=1364) to work on /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:21:52.432+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/data_quality_reconciliation_dag.py for tasks to queue
+[2026-10-15T05:21:52.435+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:52.435+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:21:52.872+0000] {processor.py:840} INFO - DAG(s) 'bfsi_quality_and_orchestration_pipeline' retrieved from /opt/airflow/dags/data_quality_reconciliation_dag.py
+[2026-10-15T05:21:52.922+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:52.921+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:21:52.984+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:52.983+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_quality_and_orchestration_pipeline to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:21:53.031+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/data_quality_reconciliation_dag.py took 0.611 seconds

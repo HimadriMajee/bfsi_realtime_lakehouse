@@ -1241,3 +1241,24 @@
 [2026-10-15T05:19:58.766+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:19:58.766+0000] {dag.py:3036} INFO - Sync 1 DAGs
 [2026-10-15T05:19:58.852+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:19:58.851+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_glue_athena_orchestration to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
 [2026-10-15T05:19:58.917+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/lakehouse_orchestration_dag.py took 0.582 seconds
+[2026-10-15T05:20:29.622+0000] {processor.py:161} INFO - Started process (PID=1339) to work on /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:20:29.629+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/lakehouse_orchestration_dag.py for tasks to queue
+[2026-10-15T05:20:29.634+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:29.633+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:20:29.906+0000] {processor.py:840} INFO - DAG(s) 'bfsi_glue_athena_orchestration' retrieved from /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:20:29.968+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:29.967+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:20:30.016+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:20:30.015+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_glue_athena_orchestration to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:20:30.062+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/lakehouse_orchestration_dag.py took 0.451 seconds
+[2026-10-15T05:21:00.574+0000] {processor.py:161} INFO - Started process (PID=1349) to work on /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:21:00.576+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/lakehouse_orchestration_dag.py for tasks to queue
+[2026-10-15T05:21:00.579+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:00.578+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:21:00.737+0000] {processor.py:840} INFO - DAG(s) 'bfsi_glue_athena_orchestration' retrieved from /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:21:00.783+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:00.783+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:21:00.827+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:00.827+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_glue_athena_orchestration to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:21:00.874+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/lakehouse_orchestration_dag.py took 0.309 seconds
+[2026-10-15T05:21:31.819+0000] {processor.py:161} INFO - Started process (PID=1359) to work on /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:21:31.834+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/lakehouse_orchestration_dag.py for tasks to queue
+[2026-10-15T05:21:31.839+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:31.838+0000] {dagbag.py:538} INFO - Filling up the DagBag from /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:21:32.646+0000] {processor.py:840} INFO - DAG(s) 'bfsi_glue_athena_orchestration' retrieved from /opt/airflow/dags/lakehouse_orchestration_dag.py
+[2026-10-15T05:21:32.941+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:32.940+0000] {dag.py:3036} INFO - Sync 1 DAGs
+[2026-10-15T05:21:33.057+0000] {logging_mixin.py:188} INFO - [2026-10-15T05:21:33.056+0000] {dag.py:3823} INFO - Setting next_dagrun for bfsi_glue_athena_orchestration to 2026-10-15 00:00:00+00:00, run_after=2026-10-16 00:00:00+00:00
+[2026-10-15T05:21:33.420+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/lakehouse_orchestration_dag.py took 1.632 seconds
