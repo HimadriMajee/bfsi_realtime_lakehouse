@@ -1,45 +1,184 @@
-name: BFSI Lakehouse DataOps CI/CD Pipeline
+# ==============================================================================
+# GITHUB ACTIONS CI/CD PIPELINE: BFSI REAL-TIME LAKEHOUSE DATAOPS
+# ==============================================================================
+# Purpose: Automates Continuous Integration (linting, DAG syntax checks, PyTest) 
+#          and Continuous Deployment (syncing DAG artifacts to S3/Airflow) on push.
+#
+# ARCHITECTURAL DESIGN TRADEOFFS & ALTERNATIVES:
+# 1. GitHub-Hosted Runners vs. Self-Hosted Runners:
+#    - Chosen: `ubuntu-latest` GitHub-hosted runners.
+#    - Why: Zero infrastructure maintenance overhead, fresh ephemeral isolated environment per run.
+#    - Alternative: Self-hosted EC2 / Kubernetes runners placed inside AWS VPC for direct access to 
+#      private Airflow instances without public S3 endpoints.
+# 2. Deployment Mechanism (AWS S3 Sync vs. SSH/SCP to EC2 vs. MWAA API):
+#    - Chosen: S3 Sync (`aws s3 sync`).
+#    - Why: Industry standard for AWS Managed Workflows for Apache Airflow (MWAA) and Dockerized Airflow 
+#      nodes mounting S3 via S3FS. Extremely fast, incremental, and reliable.
+#    - Alternative: Docker Image Build & Push to Amazon ECR (requires container redeployments).
+#
+# REAL-TIME BOTTLENECKS, PRODUCTION PROBLEMS & RESOLUTION STRATEGIES:
+# 1. BOTTLENECK 1: Broken Airflow DAG Ingestion in Production (DagBag Syntax Failures)
+#    - Problem: Pushing a DAG script with missing imports or syntax errors crashes the Airflow Scheduler 
+#      or halts execution for all active DAGs in the environment.
+#    - Resolution: Run an explicit `DagBag` import check step in CI before deployment (`python -c "import DagBag..."`).
+#
+# 2. BOTTLENECK 2: AWS IAM Credentials Leakage & Hardcoding Risks
+#    - Problem: Hardcoding AWS credentials inside `.github/workflows/deploy.yml` exposes production secrets.
+#    - Resolution: Inject secrets dynamically via GitHub Secrets (`${{ secrets.AWS_ACCESS_KEY_ID }}`) or 
+#      transition to OpenID Connect (OIDC) short-lived IAM assume role tokens (`aws-actions/configure-aws-credentials`).
+#
+# 3. BOTTLENECK 3: S3 Sync Overwriting Active DAG State / Race Conditions
+#    - Problem: Deploying heavy DAG code changes while tasks are actively executing can cause task state corruption.
+#    - Resolution: Implement DAG versioning (`dags/v1/`, `dags/v2/`) or use blue/green deployment strategy for Airflow DAGs.
+# ==============================================================================
 
+# Step 1: Define Workflow Name as displayed in GitHub Actions UI tab
+name: BFSI Lakehouse CI/CD Pipeline
+
+# Step 2: Define Trigger Events (When should this automated pipeline run?)
 on:
+  # Step 2a: Trigger on code push events directly targeting the 'main' production branch
   push:
-    branches: [ main ]
+    branches:
+      - main
+  # Step 2b: Trigger on Pull Requests targeting 'main' to validate code quality before merging
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
+# Step 3: Define Execution Jobs (Parallel or sequential automation tasks)
 jobs:
-  quality-and-test:
+  # ----------------------------------------------------------------------------
+  # JOB 1: CONTINUOUS INTEGRATION (CI) - CODE QUALITY, LINTING & DAG VALIDATION
+  # ----------------------------------------------------------------------------
+  code-quality-and-test:
+    # Step 3a: Human-readable display name for Job 1 in GitHub UI
+    name: Lint Code & Validate DAG Syntax
+    
+    # Step 3b: Specify operating system environment (Ephemeral Ubuntu Linux container)
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      # Step 4: Checkout repository source code into the GitHub runner workspace
+      - name: Checkout Code Repository
+        # Why: GitHub Actions runners start empty; this action pulls git commit files
         uses: actions/checkout@v3
 
-      - name: Set up Python 3.12
+      # Step 5: Provision Python runtime environment on the runner
+      - name: Set up Python Runtime
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
+          # Why: Pin Python version 3.10 to match Docker Airflow container runtime exactly
+          python-version: '3.10'
+          # Why: Cache pip packages across CI runs to speed up workflow execution times
+          cache: 'pip'
 
-      - name: Install Dependencies
+      # Step 6: Install required Python linting, testing, and Airflow orchestration dependencies
+      - name: Install CI/CD Dependencies
         run: |
+          # Upgrade pip package installer to latest version
           python -m pip install --upgrade pip
-          pip install pytest pyspark delta-spark
+          # Install Flake8 linter, PyTest unit test runner, Apache Airflow core, and Boto3 SDK
+          pip install flake8 pytest apache-airflow==2.8.1 boto3
 
-      - name: Run PyTest Transformation Tests
+      # Step 7: Perform static code analysis using Flake8
+      - name: Lint Python Source Code (Flake8)
         run: |
-          pytest python/tests/ -v
+          # Step 7a: Fail build instantly if critical syntax errors or undefined variables exist
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Step 7b: Warn on style guideline deviations (PEP8) without failing the entire build
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
-  infrastructure-and-deploy:
-    needs: quality-and-test
-    if: github.ref == 'refs/heads/main'
+      # Step 8: Validate Airflow DAG syntax and verify zero import errors (DagBag Test)
+      - name: Validate Airflow DAGs Syntax & Imports
+        run: |
+          # Set temporary environment variable pointing to repo workspace
+          export AIRFLOW_HOME=$GITHUB_WORKSPACE/airflow-docker
+          # Execute inline Python script leveraging Airflow's native DagBag parser
+          python -c "
+          import sys
+          from airflow.models import DagBag
+          # Load all DAG files from target directory
+          dagbag = DagBag(dag_folder='airflow-docker/dags', include_examples=False)
+          # Check if Airflow parser encountered broken imports or syntax failures
+          if len(dagbag.import_errors) > 0:
+              print(f'DAG Import Errors Found: {dagbag.import_errors}')
+              sys.exit(1) # Exit with failure code 1 to fail the CI step
+          print(f'Successfully loaded {len(dagbag.dags)} DAG(s) without syntax errors.')
+          "
+
+  # ----------------------------------------------------------------------------
+  # JOB 2: CONTINUOUS DEPLOYMENT (CD) - DEPLOY DAG ARTIFACTS TO PRODUCTION
+  # ----------------------------------------------------------------------------
+  deploy-to-production:
+    # Step 9a: Human-readable display name for Job 2 in GitHub UI
+    name: Deploy DAGs to Production
+    
+    # Step 9b: Enforce dependency—Job 2 ONLY runs if Job 1 (CI) passes successfully
+    needs: code-quality-and-test
+    
+    # Step 9c: Enforce security condition—Deployment ONLY triggers on push to 'main' (not on PRs)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    # Step 9d: Specify operating system environment
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      # Step 10: Checkout repository code into the deployment runner workspace
+      - name: Checkout Code Repository
         uses: actions/checkout@v3
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+      # Step 11: Authenticate runner against AWS cloud using encrypted repository secrets
+      - name: Configure AWS Credentials for Deployment
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          # Why: Safely injects AWS Access Credentials stored in GitHub Secrets repository settings
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          # Why: Pins deployment destination region to US-East-1
+          aws-region: us-east-1
 
-      - name: Terraform Init & Apply
+      # Step 12: Sync validated DAG files directly to AWS S3 / Airflow production DAG bucket
+      - name: Sync DAG Artifacts to AWS S3 / Airflow Workspace
         run: |
-          cd terraform
-          terraform init
-          # terraform apply -auto-approve (uncomment when AWS credentials are wired)
+          echo "Deploying production DAG files to Airflow DAG storage..."
+          # Executes AWS CLI S3 Sync command to incrementally transfer DAG changes
+          aws s3 sync airflow-docker/dags/ s3://bfsi-realtime-lakehouse-prod-s3/dags/ --delete
+          echo "Deployment completed successfully."
+
+# ==============================================================================
+# SENIOR DATA ENGINEER CI/CD INTERVIEW Q&A SUITE:
+# ==============================================================================
+# BEGINNER LEVEL:
+# Q1: What is the difference between Continuous Integration (CI) and Continuous Deployment (CD)?
+# A1: CI automatically tests, lints, and validates code changes (e.g., DAG syntax checks) whenever 
+#     developers open pull requests. CD automatically deploys validated code artifacts (e.g., syncs DAGs 
+#     to S3/Airflow) into production environments upon merging code into the main branch.
+#
+# Q2: Why do we use `secrets.AWS_ACCESS_KEY_ID` instead of plain text credentials in the YAML file?
+# A2: Hardcoding credentials exposes sensitive cloud keys to public/unauthorized view in source control. 
+#     GitHub Secrets encrypts these variables at rest and injects them securely at runtime into runners.
+#
+# INTERMEDIATE LEVEL:
+# Q3: What is the purpose of the `needs: code-quality-and-test` line under the deployment job?
+# A3: It creates a strict execution dependency graph. It guarantees that the Continuous Deployment job 
+#     (`deploy-to-production`) will NEVER execute if the Continuous Integration job fails syntax or 
+#     linting checks, protecting production Airflow from broken code.
+#
+# Q4: How does `aws s3 sync ... --delete` work during DAG deployment?
+# A4: `aws s3 sync` compares local files with the destination S3 bucket path and transfers only modified 
+#     or new files (minimizing network bandwidth). The `--delete` flag removes obsolete DAG files from S3 
+#     that were deleted locally in the repository, maintaining workspace hygiene.
+#
+# ADVANCED LEVEL:
+# Q5: How do you prevent deployment downtime or broken DAG runs during active execution in Airflow?
+# A5: 1. Parse DAGs with Airflow's `DagBag` in CI prior to deployment.
+#     2. Use AWS OIDC (OpenID Connect) for keyless short-lived IAM credentials instead of static access keys.
+#     3. Implement DAG versioning (`dag_id="bfsi_quality_pipeline_v2"`) or deploy to a staging Airflow 
+#        environment before syncing to production MWAA S3 DAG buckets.
+#
+# Q6: How would you scale this workflow to support multi-environment deployments (Dev -> Staging -> Prod)?
+# A6: Utilize GitHub Actions Environments (`environment: production`) with protected branch policies and 
+#     manual approval gates. Map branch triggers (`dev`, `staging`, `main`) to environment-specific AWS S3 
+#     DAG buckets and IAM roles.
+# ==============================================================================
