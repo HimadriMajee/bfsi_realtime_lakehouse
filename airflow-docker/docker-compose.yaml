@@ -1,0 +1,132 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: AIRFLOW 2.8.1 LOCAL DEV / DATAOPS SETUP
+# ==============================================================================
+# ARCHITECTURE OVERVIEW:
+# Airflow consists of multiple stateful services (webserver, scheduler, metadata DB).
+# Docker Compose orchestrates these into isolated containers with unified networks 
+# and shared volume mounts.
+#
+# DESIGN TRADEOFFS & ALTERNATIVES:
+# 1. Executor Selection (LocalExecutor chosen):
+#    - Why: Allows running multiple task instances in parallel using multi-processing
+#      on a single host without requiring an external queue broker.
+#    - Alternative: CeleryExecutor (requires Redis/RabbitMQ as a queue) or 
+#      KubernetesExecutor (spawns ephemeral pods per task) for massive enterprise scale.
+# 2. Workspace Decoupling:
+#    - Why: Running Airflow in its own directory (`airflow-docker/`) prevents 
+#      dependency collisions with local streaming services (Kafka/Kraft/Kafka UI).
+# 3. Secret Management:
+#    - Current: Plain-text environment fallback variables for local development.
+#    - Production Alternative: Integrate AWS Secrets Manager or HashiCorp Vault via 
+#      AIRFLOW__SECRETS__BACKEND configuration.
+#
+# REAL-TIME BOTTLENECKS & PRODUCTION INCIDENTS:
+# - Incident 1: Port Allocation Conflicts (e.g., Error binding 0.0.0.0:8080)
+#   * Problem: Kafka UI or Spark Master UI already occupies port 8080 on the host network.
+#   * Resolution: Map host port 8081 to container port 8080 (`8081:8080`) under 
+#     `airflow-webserver` to isolate web interfaces cleanly.
+# - Incident 2: Host CPU / RAM Resource Contention (OOMKilled)
+#   * Problem: Running heavy PySpark structured streaming jobs alongside Dockerized 
+#     Airflow causes local workstation RAM exhaustion and kills container processes.
+#   * Resolution: Enforce explicit container memory limits (`deploy.resources.limits.memory: 2g`)
+#     and tune Airflow parallelism settings (`AIRFLOW__CORE__PARALLELISM: 16`).
+# ==============================================================================
+
+# YAML Anchor (&airflow-common): Shared base configuration across Airflow services (DRY principle).
+x-airflow-common:
+  &airflow-common
+  # Official Apache Airflow image pinned to Python 3.10 runtime
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.8.1-python3.10}
+  
+  environment:
+    &airflow-common-env
+    # Core Executor Configuration
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    
+    # Metadata Database Connection URI (Points to internal PostgreSQL container)
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    
+    # Encryption key for securing connections and sensitive variables in the Metastore
+    AIRFLOW__CORE__FERNET_KEY: ''
+    
+    # Prevent newly created DAGs from automatically triggering upon deployment
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    
+    # Disable default sample DAGs to maintain a clean UI environment
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    
+    # AWS Credentials passed to containers for Boto3 SDK execution
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-mock_key}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-mock_secret}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+
+  # Volume Mounts: Bind host workspace directories directly into container paths
+  volumes:
+    - ./dags:/opt/airflow/dags       # Mounts DAG code (Live reloads without image rebuilds)
+    - ./logs:/opt/airflow/logs       # Persists task execution logs on host disk across restarts
+    - ./config:/opt/airflow/config   # Custom airflow.cfg configuration overrides
+    - ./plugins:/opt/airflow/plugins # Custom operators, hooks, and UI plugins
+
+  # Run container processes as host UID (50000) to prevent Linux volume permission issues
+  user: "${AIRFLOW_UID:-50000}:0"
+  
+  # Boot Dependency: Ensures metadata database is healthy before starting Airflow daemons
+  depends_on:
+    - postgres
+
+services:
+  # ----------------------------------------------------------------------------
+  # SERVICE 1: POSTGRESQL METADATA DATABASE
+  # ----------------------------------------------------------------------------
+  # Stores DAG runs, task states, execution history, variables, and XCom data.
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432" # Maps standard PostgreSQL port to host
+    healthcheck:
+      # Verifies PostgreSQL is accepting TCP connections before schema migration
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # SERVICE 2: AIRFLOW DATABASE INITIALIZER (EPHEMERAL BOOT CONTAINER)
+  # ----------------------------------------------------------------------------
+  # Executes DB schema migrations (`airflow db migrate`) and provisions Admin account.
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+
+  # ----------------------------------------------------------------------------
+  # SERVICE 3: AIRFLOW WEBSERVER (USER INTERFACE)
+  # ----------------------------------------------------------------------------
+  # Flask/Gunicorn web interface accessible at http://localhost:8081
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8081:8080" # Map host port 8081 to container port 8080 (Avoids conflict with Kafka UI)
+    healthcheck:
+      # Polls webserver internal health endpoint
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # SERVICE 4: AIRFLOW SCHEDULER (CORE DAEMON ENGINE)
+  # ----------------------------------------------------------------------------
+  # Background daemon that parses DAG files, evaluates trigger rules, and dispatches tasks.
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler

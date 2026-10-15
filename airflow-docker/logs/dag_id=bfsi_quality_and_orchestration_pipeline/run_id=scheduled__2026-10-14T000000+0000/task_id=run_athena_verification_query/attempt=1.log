@@ -1,0 +1,17 @@
+[2026-10-15T04:45:30.904+0000] {taskinstance.py:1956} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: bfsi_quality_and_orchestration_pipeline.run_athena_verification_query scheduled__2026-10-14T00:00:00+00:00 [queued]>
+[2026-10-15T04:45:30.930+0000] {taskinstance.py:1956} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: bfsi_quality_and_orchestration_pipeline.run_athena_verification_query scheduled__2026-10-14T00:00:00+00:00 [queued]>
+[2026-10-15T04:45:30.937+0000] {taskinstance.py:2170} INFO - Starting attempt 1 of 3
+[2026-10-15T04:45:30.972+0000] {taskinstance.py:2191} INFO - Executing <Task(PythonOperator): run_athena_verification_query> on 2026-10-14 00:00:00+00:00
+[2026-10-15T04:45:30.988+0000] {standard_task_runner.py:60} INFO - Started process 662 to run task
+[2026-10-15T04:45:30.996+0000] {standard_task_runner.py:87} INFO - Running: ['***', 'tasks', 'run', 'bfsi_quality_and_orchestration_pipeline', 'run_athena_verification_query', 'scheduled__2026-10-14T00:00:00+00:00', '--job-id', '8', '--raw', '--subdir', 'DAGS_FOLDER/data_quality_reconciliation_dag.py', '--cfg-path', '/tmp/tmp6ezsqvf2']
+[2026-10-15T04:45:31.004+0000] {standard_task_runner.py:88} INFO - Job 8: Subtask run_athena_verification_query
+[2026-10-15T04:45:31.045+0000] {logging_mixin.py:188} WARNING - /home/***/.local/lib/python3.10/site-packages/***/settings.py:194 DeprecationWarning: The sql_alchemy_conn option in [core] has been moved to the sql_alchemy_conn option in [database] - the old setting has been used, but please update your config.
+[2026-10-15T04:45:31.153+0000] {task_command.py:423} INFO - Running <TaskInstance: bfsi_quality_and_orchestration_pipeline.run_athena_verification_query scheduled__2026-10-14T00:00:00+00:00 [running]> on host 4e61eaa1d972
+[2026-10-15T04:45:31.438+0000] {taskinstance.py:2480} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='data_engineering_team' AIRFLOW_CTX_DAG_ID='bfsi_quality_and_orchestration_pipeline' AIRFLOW_CTX_TASK_ID='run_athena_verification_query' AIRFLOW_CTX_EXECUTION_DATE='2026-10-14T00:00:00+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='scheduled__2026-10-14T00:00:00+00:00'
+[2026-10-15T04:45:31.445+0000] {data_quality_reconciliation_dag.py:271} INFO - Submitting verification analytics query to Amazon Athena...
+[2026-10-15T04:45:31.480+0000] {credentials.py:1147} INFO - Found credentials in environment variables.
+[2026-10-15T04:45:32.555+0000] {data_quality_reconciliation_dag.py:289} WARNING - Athena execution bypassed due to local/mock AWS credentials. Details: An error occurred (UnrecognizedClientException) when calling the StartQueryExecution operation: The security token included in the request is invalid.
+[2026-10-15T04:45:32.565+0000] {python.py:201} INFO - Done. Returned value was: None
+[2026-10-15T04:45:32.651+0000] {taskinstance.py:1138} INFO - Marking task as SUCCESS. dag_id=bfsi_quality_and_orchestration_pipeline, task_id=run_athena_verification_query, execution_date=20261014T000000, start_date=20261015T044530, end_date=20261015T044532
+[2026-10-15T04:45:32.748+0000] {local_task_job_runner.py:234} INFO - Task exited with return code 0
+[2026-10-15T04:45:32.776+0000] {taskinstance.py:3280} INFO - 0 downstream tasks scheduled from follow-on schedule check
